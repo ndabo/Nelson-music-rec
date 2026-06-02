@@ -45,13 +45,36 @@ def placeholders(count: int) -> str:
     return ", ".join(placeholder() for _ in range(count))
 
 
+class _Psycopg2Connection:
+    """Wrapper so psycopg2 connections work like the rest of the codebase expects:
+    dict-style rows, .execute().fetchone()/.fetchall(), and context-manager commit."""
+
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params: tuple = ()) -> Any:
+        import psycopg2.extras
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql, params)
+        return cur
+
+    def __enter__(self) -> "_Psycopg2Connection":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        self._conn.close()
+
+
 def get_connection() -> Any:
     db_url = get_database_url()
     if db_url:
-        from psycopg import connect
-        from psycopg.rows import dict_row
-
-        return connect(db_url, row_factory=dict_row, prepare_threshold=None)
+        import psycopg2
+        conn = psycopg2.connect(db_url)
+        return _Psycopg2Connection(conn)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)
