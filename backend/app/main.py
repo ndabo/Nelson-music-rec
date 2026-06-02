@@ -34,8 +34,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize database at module load time (reliable for serverless cold starts)
-init_database()
+# Initialize database — wrapped in try/except so the app still starts if DB is temporarily unavailable
+try:
+    init_database()
+except Exception as e:
+    import sys
+    print(f"WARNING: Database init failed: {e}", file=sys.stderr)
 
 
 @app.get("/api/health")
