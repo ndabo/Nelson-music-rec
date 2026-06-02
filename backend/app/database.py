@@ -25,11 +25,16 @@ def load_local_env() -> None:
 
 
 load_local_env()
-DATABASE_URL = os.getenv("DATABASE_URL")
+
+_db_initialized = False
+
+
+def get_database_url() -> str | None:
+    return os.getenv("DATABASE_URL")
 
 
 def is_postgres() -> bool:
-    return bool(DATABASE_URL)
+    return bool(get_database_url())
 
 
 def placeholder() -> str:
@@ -41,11 +46,12 @@ def placeholders(count: int) -> str:
 
 
 def get_connection() -> Any:
-    if DATABASE_URL:
+    db_url = get_database_url()
+    if db_url:
         from psycopg import connect
         from psycopg.rows import dict_row
 
-        return connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+        return connect(db_url, row_factory=dict_row, prepare_threshold=None)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)

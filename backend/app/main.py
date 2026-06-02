@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,17 +14,17 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 
-# Allow the Vercel deployment URL (set FRONTEND_URL env var in Vercel dashboard)
-import os
-
 _frontend_url = os.getenv("FRONTEND_URL")
 if _frontend_url:
     ALLOWED_ORIGINS.append(_frontend_url)
 
-# Also allow same-origin requests on Vercel (API is served from the same domain)
 _vercel_url = os.getenv("VERCEL_URL")
 if _vercel_url:
     ALLOWED_ORIGINS.append(f"https://{_vercel_url}")
+
+# On Vercel, allow all origins since frontend and API share the same domain
+if os.getenv("VERCEL"):
+    ALLOWED_ORIGINS.append("*")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,15 +34,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.on_event("startup")
-def startup() -> None:
-    init_database()
+# Initialize database at module load time (reliable for serverless cold starts)
+init_database()
 
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    from app.database import get_database_url
+    has_db = bool(get_database_url())
+    return {"status": "ok", "database": "postgres" if has_db else "none"}
 
 
 app.include_router(songs.router, prefix="/api")
