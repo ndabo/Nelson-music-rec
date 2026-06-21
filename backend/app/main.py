@@ -49,5 +49,17 @@ def health() -> dict[str, str]:
     return {"status": "ok", "database": "postgres" if has_db else "none"}
 
 
+@app.get("/api/keep-alive")
+def keep_alive() -> dict[str, str]:
+    """Runs a trivial query so the database registers activity. Hit on a
+    schedule (Vercel Cron) to stop Supabase from pausing the project for
+    inactivity. A static page load or the /api/health check does NOT count
+    as activity because neither touches Postgres."""
+    from app.database import get_connection
+    with get_connection() as connection:
+        connection.execute("SELECT 1")
+    return {"status": "ok", "pinged": "database"}
+
+
 app.include_router(songs.router, prefix="/api")
 app.include_router(requests.router, prefix="/api")
