@@ -18,7 +18,6 @@ from app.services.request_limit_service import (
     DAILY_REQUEST_LIMIT,
     count_requests_today,
     hash_ip,
-    remaining_requests_today,
 )
 
 
@@ -56,37 +55,31 @@ def verify_staff_pin(x_staff_pin: Annotated[str | None, Header(alias="X-Staff-Pi
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Staff PIN required.")
 
 
-def pending_duplicate_exists(song_title: str, artist_name: str, track_id: str | None) -> bool:
+def pending_duplicate_exists(
+    connection, song_title: str, artist_name: str, track_id: str | None
+) -> bool:
+    """Single-query duplicate check against an already-open connection.
+    Matches on Spotify track id (if present) OR on title+artist."""
     normalized_title = song_title.strip().lower()
     normalized_artist = artist_name.strip().lower()
     param = placeholder()
 
-    with get_connection() as connection:
-        if track_id:
-            row = connection.execute(
-                f"""
-                SELECT id
-                FROM song_requests
-                WHERE status = 'pending'
-                  AND spotify_track_id = {param}
-                LIMIT 1
-                """,
-                (track_id,),
-            ).fetchone()
-            if row is not None:
-                return True
+    conditions = [f"(LOWER(TRIM(song_title)) = {param} AND LOWER(TRIM(artist_name)) = {param})"]
+    params: list = [normalized_title, normalized_artist]
+    if track_id:
+        conditions.insert(0, f"spotify_track_id = {param}")
+        params.insert(0, track_id)
 
-        row = connection.execute(
-            f"""
-            SELECT id
-            FROM song_requests
-            WHERE status = 'pending'
-              AND LOWER(TRIM(song_title)) = {param}
-              AND LOWER(TRIM(artist_name)) = {param}
-            LIMIT 1
-            """,
-            (normalized_title, normalized_artist),
-        ).fetchone()
+    row = connection.execute(
+        f"""
+        SELECT id
+        FROM song_requests
+        WHERE status = 'pending'
+          AND ({" OR ".join(conditions)})
+        LIMIT 1
+        """,
+        tuple(params),
+    ).fetchone()
     return row is not None
 
 
@@ -102,25 +95,33 @@ def get_request_limit(user_device_id: str) -> RequestLimitInfo:
 
 @router.post("/requests", response_model=SongRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_song_request(payload: SongRequestCreate, request: Request) -> SongRequestResponse:
-    if pending_duplicate_exists(payload.song_title, payload.artist_name, payload.spotify_track_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This song is already in the staff queue.",
-        )
-
-    used_today = count_requests_today(payload.user_device_id)
-    if used_today >= DAILY_REQUEST_LIMIT:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Daily request limit reached ({DAILY_REQUEST_LIMIT} songs).",
-        )
-
     requested_at = datetime.now(timezone.utc)
     request_date = date.today().isoformat()
     user_ip_hash = hash_ip(request.client.host if request.client else None)
-    returning_clause = " RETURNING id" if is_postgres() else ""
+    postgres = is_postgres()
+    returning_clause = " RETURNING *" if postgres else ""
 
+    # One connection / one transaction for the whole request: duplicate check,
+    # daily-limit check, and insert. Avoids opening four separate Postgres
+    # connections (each a TCP+TLS handshake) and makes the checks atomic.
     with get_connection() as connection:
+        if pending_duplicate_exists(
+            connection, payload.song_title, payload.artist_name, payload.spotify_track_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This song is already in the staff queue.",
+            )
+
+        used_today = count_requests_today(
+            payload.user_device_id, connection=connection
+        )
+        if used_today >= DAILY_REQUEST_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Daily request limit reached ({DAILY_REQUEST_LIMIT} songs).",
+            )
+
         cursor = connection.execute(
             f"""
             INSERT INTO song_requests (
@@ -150,18 +151,19 @@ def create_song_request(payload: SongRequestCreate, request: Request) -> SongReq
                 request_date,
             ),
         )
-        if is_postgres():
-            request_id = cursor.fetchone()["id"]
+        if postgres:
+            row = cursor.fetchone()
         else:
-            request_id = cursor.lastrowid
-        row = connection.execute(
-            f"SELECT * FROM song_requests WHERE id = {placeholder()}",
-            (request_id,),
-        ).fetchone()
+            row = connection.execute(
+                f"SELECT * FROM song_requests WHERE id = {placeholder()}",
+                (cursor.lastrowid,),
+            ).fetchone()
 
+    # We just added one row, so remaining is known without another query.
+    remaining = max(DAILY_REQUEST_LIMIT - (used_today + 1), 0)
     return SongRequestResponse(
         request=row_to_song_request(row),
-        remaining_requests_today=remaining_requests_today(payload.user_device_id),
+        remaining_requests_today=remaining,
     )
 
 

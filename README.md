@@ -14,10 +14,10 @@ uvicorn app.main:app --reload
 
 The API runs at `http://127.0.0.1:8000`.
 
-Staff routes require a PIN. For local development the default is `1234`; set `STAFF_PIN` before starting the backend to change it:
+Staff routes require a PIN. Set `STAFF_PIN` to your own value before starting the backend (use a strong, non-default PIN for any deployment):
 
 ```bash
-STAFF_PIN=2468 uvicorn app.main:app --reload
+STAFF_PIN=your-staff-pin uvicorn app.main:app --reload
 ```
 
 ## Frontend
@@ -68,7 +68,7 @@ The backend uses SQLite when `DATABASE_URL` is not set. To use Supabase, set `DA
 
 ```bash
 DATABASE_URL='postgres://postgres.your-project-ref:YOUR-PASSWORD@aws-0-your-region.pooler.supabase.com:5432/postgres'
-STAFF_PIN=1234
+STAFF_PIN=your-staff-pin
 ```
 
 6. Start the backend:
