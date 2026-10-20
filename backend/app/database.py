@@ -47,10 +47,16 @@ def placeholders(count: int) -> str:
 
 class _Psycopg2Connection:
     """Wrapper so psycopg2 connections work like the rest of the codebase expects:
-    dict-style rows, .execute().fetchone()/.fetchall(), and context-manager commit."""
+    dict-style rows, .execute().fetchone()/.fetchall(), and context-manager commit.
 
-    def __init__(self, conn: Any) -> None:
+    On exit the underlying connection is returned to the pool for reuse instead
+    of being closed, so the next request skips the TCP+TLS connect handshake. If
+    the request errored, the connection is discarded (``close=True``) so we never
+    hand a half-broken connection to the next caller."""
+
+    def __init__(self, conn: Any, pool: Any) -> None:
         self._conn = conn
+        self._pool = pool
 
     def execute(self, sql: str, params: tuple = ()) -> Any:
         import psycopg2.extras
@@ -62,19 +68,47 @@ class _Psycopg2Connection:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        if exc_type is None:
-            self._conn.commit()
-        else:
-            self._conn.rollback()
-        self._conn.close()
+        broken = exc_type is not None
+        try:
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+        except Exception:
+            broken = True
+        self._pool.putconn(self._conn, close=broken)
+
+
+_pg_pool: Any = None
+
+
+def _get_pg_pool() -> Any:
+    """Lazily create a process-wide psycopg2 connection pool.
+
+    Vercel Fluid Compute keeps function instances warm and reuses them across
+    requests, so a module-level pool lets warm requests reuse an already-open
+    connection instead of paying the ~200-500ms Supabase connect handshake every
+    time. libpq keepalives reduce the chance the pooler drops an idle socket."""
+    global _pg_pool
+    if _pg_pool is None:
+        import psycopg2.pool
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+            1,
+            int(os.getenv("DB_POOL_MAX", "4")),
+            dsn=get_database_url(),
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+        )
+    return _pg_pool
 
 
 def get_connection() -> Any:
     db_url = get_database_url()
     if db_url:
-        import psycopg2
-        conn = psycopg2.connect(db_url)
-        return _Psycopg2Connection(conn)
+        pool = _get_pg_pool()
+        return _Psycopg2Connection(pool.getconn(), pool)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)

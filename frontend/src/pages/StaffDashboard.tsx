@@ -67,9 +67,12 @@ export function StaffDashboard() {
     setUpdatingId(id);
     try {
       await completeRequest(id, staffPin);
-      await loadQueue();
+      // Drop it locally instead of refetching the whole queue — saves a second
+      // round trip. The 5s poll keeps everything in sync anyway.
+      setQueue((current) => current.filter((request) => request.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not complete request.");
+      await loadQueue();
     } finally {
       setUpdatingId(null);
     }
@@ -80,9 +83,10 @@ export function StaffDashboard() {
     setUpdatingId(id);
     try {
       await rejectRequest(id, staffPin, reason.trim());
-      await loadQueue();
+      setQueue((current) => current.filter((request) => request.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reject request.");
+      await loadQueue();
     } finally {
       setUpdatingId(null);
     }
