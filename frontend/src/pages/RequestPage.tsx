@@ -51,7 +51,7 @@ export function RequestPage() {
   return (
     <section className="request-layout">
       <div className="request-copy">
-        <p className="eyebrow">Fitness center playlist</p>
+        <p className="eyebrow">Brown Recreation</p>
         <h1>Ask us to play a song</h1>
         <p>Pick one track for the staff queue. Requests play in the order they arrive.</p>
       </div>
