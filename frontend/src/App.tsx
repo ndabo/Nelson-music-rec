@@ -1,4 +1,3 @@
-import { Dumbbell, Headphones } from "lucide-react";
 import { RequestPage } from "./pages/RequestPage";
 import { StaffDashboard } from "./pages/StaffDashboard";
 
@@ -14,16 +13,14 @@ export function App() {
   return (
     <div className="app-shell">
       <header className="top-bar">
-        <a className="brand" href="/request" aria-label="Gym song requests">
-          <Dumbbell size={24} />
-          <span>Gym Song Requests</span>
+        {/* Wordmark only — the staff portal is never surfaced in the member UI.
+            /staff is reachable by direct URL + PIN. */}
+        <a className="brand" href="/request" aria-label="Nelson Fitness">
+          <span className="wordmark">
+            Nelson<span className="wordmark-dot">.</span>
+          </span>
+          <span className="wordmark-sub">Fitness</span>
         </a>
-        <nav className="top-nav" aria-label="Main navigation">
-          <a className={route === "request" ? "active" : ""} href="/request">
-            <Headphones size={18} />
-            Request
-          </a>
-        </nav>
       </header>
 
       <main>{route === "staff" ? <StaffDashboard /> : <RequestPage />}</main>
